@@ -1,4 +1,5 @@
-// Agent İşleri / Ajan Odası — işi ücretsiz agent'lar yapar (aynı anda, her agent kendi görevinde),
+// Agent İşleri / Ajan Odası — ücretsiz bir karar modeli isteği alt görevlere böler ve agent seçer (sahip onaylar),
+// işi ücretsiz agent'lar yapar (aynı anda, her agent kendi görevinde),
 // Codex denetler ve gerekeni düzeltir (ChatGPT aboneliği), Claude en sonda kalite kontrolüne bakar.
 // Bağımlılık yok: sadece Node.js. Çalıştır: node server.js
 //   http://127.0.0.1:4545       eski görev paneli
@@ -7,11 +8,14 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { spawn, execSync } = require('child_process');
+const { planIstemi, jsonCikar, planDogrula, tekGorevPlan } = require('./planlayici');
 
 const PORT = 4545;
 const ROOT = __dirname;
 const STATE_FILE = path.join(ROOT, 'gorevler.json');
 const JOBS_FILE = path.join(ROOT, 'isler.json');
+const PLAN_FILE = path.join(ROOT, 'planlar.json');
+const PLAN_TIMEOUT_MS = 4 * 60 * 1000; // bir karar modeli en fazla 4 dk düşünür
 const KIYAS_FILE = path.join(ROOT, 'kiyas.json');
 const RESULTS_DIR = path.join(ROOT, 'sonuclar');
 const WORK_DIR = path.join(ROOT, 'calisma');
@@ -88,6 +92,8 @@ const oku = (f, bos) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); }
 let tasks = oku(STATE_FILE, []);
 let jobs = oku(JOBS_FILE, []);
 let kiyas = oku(KIYAS_FILE, null);
+let planlar = oku(PLAN_FILE, []);
+for (const p of planlar) if (p.durum === 'calisiyor') { p.durum = 'hata'; p.not = 'Sunucu yeniden başladı, planlama yarıda kaldı.'; }
 for (const t of tasks) if (t.status === 'calisiyor') { t.status = 'bekliyor'; t.log += '\n[sunucu yeniden başladı, görev tekrar sıraya alındı]\n'; }
 const zamanlayici = {};
 function kaydet(dosya, veri) {
@@ -97,6 +103,7 @@ function kaydet(dosya, veri) {
 const save = () => kaydet(STATE_FILE, () => tasks);
 const saveJobs = () => kaydet(JOBS_FILE, () => jobs);
 const saveKiyas = () => kaydet(KIYAS_FILE, () => kiyas);
+const savePlanlar = () => kaydet(PLAN_FILE, () => planlar.slice(-20));
 
 const running = new Map(); // agentId -> { task, child, timer }
 
@@ -333,6 +340,101 @@ function claudeBaslat(job) {
   });
 }
 
+// ---- Karar modeli: isteği alt görevlere böler, agent seçer (ücretsiz modeller, sırayla) ----
+// Model yalnızca plan yazar: boş bir klasörde, dosya yazma izni (--auto) olmadan çalışır. Plan, sahibin onayına kadar bekler.
+const PLANLAYICILAR = [
+  { id: 'opencode-deepseek', ad: 'OpenCode · DeepSeek V4.1 Flash', entry: OPENCODE, args: (istem, dir) => ['run', istem, '-m', 'opencode/deepseek-v4.1-flash-free', '--dir', dir] },
+  { id: 'opencode-glm', ad: 'OpenCode · GLM 5.3 Flash', entry: OPENCODE, args: (istem, dir) => ['run', istem, '-m', 'opencode/glm-5.3-flash-free', '--dir', dir] },
+  { id: 'ollama', ad: 'Ollama · Qwen2.5 Coder 7B (yerel)', entry: OLLAMA, args: () => ['run', OLLAMA_MODEL], stdinIstem: true },
+];
+
+const VARSAYILAN_CODEX = 'Bu klasörde ücretsiz agent\'ların az önce yaptığı işi denetle. Hataları ve eksikleri düzelt, varsa testleri çalıştır. Sonunda neyi kontrol edip neyi düzelttiğini Türkçe ve kısa bir rapor olarak yaz.';
+const VARSAYILAN_CLAUDE = 'Son kalite kontrolü: ücretsiz agent\'ların işine ve Codex raporuna bak, kalan sorun varsa düzelt. İşin istenen şekilde bitip bitmediğini Türkçe ve kısa özetle; bitmeyen bir şey varsa açıkça söyle.';
+
+/** Karar modeline gösterilecek dosya listesi: git deposuysa izlenen dosyalar, değilse klasör (büyük/üretilmiş klasörler hariç). */
+function dosyaListesi(workdir) {
+  try {
+    const out = execSync('git ls-files', { cwd: workdir, maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+    const l = out.split(/\r?\n/).filter(Boolean);
+    if (l.length) return l;
+  } catch {}
+  const atla = new Set(['node_modules', '.git', '.next', 'calisma', 'sonuclar', 'dist', 'build', '.data']);
+  const sonuc = [];
+  const gez = (dir, on) => {
+    if (sonuc.length >= 400) return;
+    let ogeler = [];
+    try { ogeler = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const o of ogeler) {
+      if (sonuc.length >= 400) return;
+      if (o.isDirectory()) { if (!atla.has(o.name)) gez(path.join(dir, o.name), on + o.name + '/'); }
+      else sonuc.push(on + o.name);
+    }
+  };
+  gez(workdir, '');
+  return sonuc;
+}
+
+/** Şu an iş verilebilecek agent'lar (kurulu, kotası açık), karar modeline gösterilecek biçimde. */
+function kullanilabilirAjanlar() {
+  return AGENTS.filter(agentHazir).map((a) => ({ id: a.id, ad: a.name, model: a.model, metinSadece: !!a.textOnly }));
+}
+
+function planlayiciCalistir(p, plan, istem) {
+  return new Promise((resolve) => {
+    const bos = path.join(WORK_DIR, `plan-${plan.id}`);
+    fs.mkdirSync(bos, { recursive: true });
+    const child = spawn(p.entry, p.stdinIstem ? p.args() : p.args(istem, bos), { cwd: bos, windowsHide: true, env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' } });
+    if (p.stdinIstem) child.stdin.write(istem);
+    child.stdin.end();
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d) => { const s = clean(d); out += s; plan.log += s; savePlanlar(); });
+    child.stderr.on('data', (d) => { err += clean(d); });
+    const timer = setTimeout(() => { plan.log += '\n[zaman aşımı]\n'; child.kill(); }, PLAN_TIMEOUT_MS);
+    child.on('error', (e) => { clearTimeout(timer); resolve({ kod: -1, out, err: String(e) }); });
+    child.on('close', (kod) => { clearTimeout(timer); resolve({ kod, out, err }); });
+  });
+}
+
+async function planla(plan) {
+  const ajanlar = kullanilabilirAjanlar();
+  const istem = planIstemi({ istek: plan.istek, dosyalar: dosyaListesi(plan.workdir), ajanlar });
+  for (const p of PLANLAYICILAR) {
+    if (plan.durum === 'iptal') return;
+    if (!fs.existsSync(p.entry) || agentState[p.id].cooldownUntil > Date.now()) continue;
+    plan.model = p.ad;
+    plan.log += `\n=== ${p.ad} planlıyor ===\n`;
+    savePlanlar();
+    const r = await planlayiciCalistir(p, plan, istem);
+    if (plan.durum === 'iptal') return;
+    const ham = jsonCikar(r.out);
+    const d = ham ? planDogrula(ham, ajanlar) : { ok: false, hata: QUOTA_RE.test(r.err + r.out) ? 'kota bitti' : `geçerli JSON yok (çıkış ${r.kod})` };
+    if (d.ok) {
+      Object.assign(plan, { durum: 'hazir', baslik: d.plan.baslik, gorevler: d.plan.gorevler, uyarilar: d.uyarilar, hazirZaman: Date.now() });
+      return savePlanlar();
+    }
+    plan.log += `\n[${p.ad}: ${d.hata}, sıradaki karar modeli deneniyor]\n`;
+    plan.denemeler.push({ model: p.ad, hata: d.hata });
+  }
+  const tek = tekGorevPlan(plan.istek);
+  Object.assign(plan, {
+    durum: 'hazir', model: 'yok (yedek plan)', baslik: tek.baslik, gorevler: tek.gorevler, hazirZaman: Date.now(),
+    uyarilar: ['Karar modelleri plan çıkaramadı; iş tek görev olarak otomatik agent seçimine verilecek.'],
+  });
+  savePlanlar();
+}
+
+/** Bir işi (alt görevler + denetim istemleri) başlatır: ücretsiz agent'lar → Codex → Claude. */
+function isOlustur({ baslik, workdir, gorevler, codexIstem, claudeIstem }) {
+  const job = { id: 'is' + Date.now().toString(36), baslik: baslik || 'İş', workdir, asama: 'ajanlar', codexIstem: codexIstem || VARSAYILAN_CODEX, claudeIstem: claudeIstem || VARSAYILAN_CLAUDE, createdAt: Date.now() };
+  jobs.push(job);
+  for (const g of gorevler) yeniGorev({ baslik: g.baslik, text: g.text, pref: g.pref, metinIsi: g.metinIsi, metinDosyasi: g.metinDosyasi, workdir, isId: job.id });
+  save();
+  saveJobs();
+  schedule();
+  return job;
+}
+
 // ---- HTTP ----
 function json(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -410,6 +512,7 @@ http.createServer(async (req, res) => {
         claude: job.claude ? { ...job.claude, log: (job.claude.log || '').slice(-3000) } : null,
       } : null,
       kiyas: kiyas ? { ...kiyas, log: (kiyas.log || '').slice(-2000) } : null,
+      plan: planlar.length ? (({ log, ...p }) => ({ ...p, log: (log || '').slice(-2000) }))(planlar[planlar.length - 1]) : null,
     });
   }
   if (req.method === 'POST' && url.pathname === '/api/gorev') {
@@ -429,13 +532,53 @@ http.createServer(async (req, res) => {
     const workdir = (b.workdir || '').trim();
     if (!workdir || !fs.existsSync(workdir)) return json(res, 400, { error: 'Klasör bulunamadı: ' + workdir });
     if (!Array.isArray(b.gorevler) || !b.gorevler.length) return json(res, 400, { error: 'Görev listesi boş' });
-    const job = { id: 'is' + Date.now().toString(36), baslik: b.baslik || 'İş', workdir, asama: 'ajanlar', codexIstem: b.codexIstem, claudeIstem: b.claudeIstem, createdAt: Date.now() };
-    jobs.push(job);
-    for (const g of b.gorevler) yeniGorev({ ...g, workdir, isId: job.id });
-    save();
-    saveJobs();
-    schedule();
+    const job = isOlustur({ baslik: b.baslik, workdir, gorevler: b.gorevler, codexIstem: b.codexIstem, claudeIstem: b.claudeIstem });
     return json(res, 200, { id: job.id });
+  }
+  // Karar modeli: { istek, workdir } -> plan hazırlanır (arka planda), sahibin onayını bekler
+  if (req.method === 'POST' && url.pathname === '/api/planla') {
+    const b = await body(req);
+    const istek = (b.istek || '').trim();
+    const workdir = (b.workdir || '').trim();
+    if (istek.length < 10) return json(res, 400, { error: 'İstek çok kısa' });
+    if (!workdir || !fs.existsSync(workdir)) return json(res, 400, { error: 'Klasör bulunamadı: ' + workdir });
+    if (planlar.some((p) => p.durum === 'calisiyor')) return json(res, 400, { error: 'Bir plan zaten hazırlanıyor' });
+    const plan = { id: 'pl' + Date.now().toString(36), istek: istek.slice(0, 8000), workdir, durum: 'calisiyor', log: '', denemeler: [], createdAt: Date.now() };
+    planlar.push(plan);
+    savePlanlar();
+    planla(plan).catch((e) => { plan.durum = 'hata'; plan.not = String(e).slice(0, 300); savePlanlar(); });
+    return json(res, 200, { id: plan.id });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/plan') {
+    const plan = url.searchParams.get('id') ? planlar.find((p) => p.id === url.searchParams.get('id')) : planlar[planlar.length - 1];
+    if (!plan) return json(res, 404, { error: 'Plan yok' });
+    return json(res, 200, { ...plan, log: plan.log.slice(-4000) });
+  }
+  // Onay: plan (isteğe bağlı düzeltilmiş görevlerle) işe dönüşür ve mevcut akış başlar { id, gorevler? }
+  if (req.method === 'POST' && url.pathname === '/api/plan-onayla') {
+    const b = await body(req);
+    const plan = planlar.find((p) => p.id === b.id);
+    if (!plan) return json(res, 404, { error: 'Plan yok' });
+    if (plan.durum !== 'hazir') return json(res, 400, { error: 'Plan onaya hazır değil' });
+    let gorevler = plan.gorevler;
+    if (Array.isArray(b.gorevler)) {
+      const d = planDogrula({ baslik: plan.baslik, gorevler: b.gorevler }, kullanilabilirAjanlar());
+      if (!d.ok) return json(res, 400, { error: d.hata });
+      gorevler = d.plan.gorevler;
+    }
+    const job = isOlustur({ baslik: plan.baslik, workdir: plan.workdir, gorevler });
+    Object.assign(plan, { durum: 'onaylandi', isId: job.id, gorevler });
+    savePlanlar();
+    return json(res, 200, { id: job.id });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/plan-iptal') {
+    const b = await body(req);
+    const plan = planlar.find((p) => p.id === b.id);
+    if (!plan) return json(res, 404, { error: 'Plan yok' });
+    if (plan.durum === 'onaylandi') return json(res, 400, { error: 'Plan zaten başlatıldı' });
+    plan.durum = 'iptal';
+    savePlanlar();
+    return json(res, 200, { ok: true });
   }
   // Denetimi yeniden çalıştır: ücretsiz agent'ların işi durur, Codex → Claude aşamaları baştan yapılır { id? }
   if (req.method === 'POST' && url.pathname === '/api/denetle') {

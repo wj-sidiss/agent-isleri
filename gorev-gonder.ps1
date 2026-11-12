@@ -3,8 +3,12 @@
 #   gorev-gonder.ps1 -Gorev "metin" [-Agent otomatik|antigravity|opencode-glm|opencode-deepseek|ollama] [-Klasor C:\yol] [-Bekle 300]
 #   gorev-gonder.ps1 -Durum <gorevId>
 #   gorev-gonder.ps1 -Liste
+#   gorev-gonder.ps1 -Planla "istek" -Klasor C:\yol [-Bekle 300]   (karar modeli böler, plan onay bekler)
+#   gorev-gonder.ps1 -Onayla <planId>                                 (planı başlatır)
 param(
   [string]$Gorev,
+  [string]$Planla,
+  [string]$Onayla,
   [string]$Agent = 'otomatik',
   [string]$Klasor = '',
   [int]$Bekle = 0,
@@ -53,6 +57,55 @@ if ($Izle) {
     $open = @($all | Where-Object { $_.status -in 'bekliyor', 'calisiyor' })
   } while ($open.Count -gt 0)
   foreach ($t in $all) { Show-Task $t; Write-Output '' }
+  exit 0
+}
+
+function Post-Json($yol, $nesne) {
+  $b = $nesne | ConvertTo-Json -Depth 6
+  try { Invoke-RestMethod "$Base$yol" -Method Post -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($b)) }
+  catch {
+    $m = $_.ErrorDetails.Message
+    try { $e = ($m | ConvertFrom-Json).error } catch { $e = $null }
+    if (-not $e) { $e = $_.Exception.Message }
+    [pscustomobject]@{ error = $e }
+  }
+}
+
+function Show-Plan($p) {
+  Write-Output "PLAN: $($p.id) | Durum: $($p.durum) | Model: $($p.model)"
+  if ($p.durum -eq 'hata') { Write-Output "Hata: $($p.not)"; return }
+  if ($p.durum -ne 'hazir' -and $p.durum -ne 'onaylandi') { return }
+  Write-Output "İş: $($p.baslik) | Klasör: $($p.workdir)"
+  $i = 0
+  foreach ($g in $p.gorevler) {
+    $i++
+    Write-Output "$i. $($g.baslik) -> $($g.pref)$(if ($g.metinIsi) { ' (metin)' })"
+    if ($g.dosyalar) { Write-Output "   dosyalar: $($g.dosyalar -join ', ')" }
+  }
+  foreach ($u in $p.uyarilar) { Write-Output "UYARI: $u" }
+  if ($p.durum -eq 'hazir') { Write-Output "Onaylamak için: -Onayla $($p.id)" }
+}
+
+if ($Planla) {
+  # Karar modeli isteği alt görevlere böler; plan onay bekler (ajanlar başlamaz).
+  if (-not $Klasor) { Write-Output 'Planlama için çalışma klasörü gerekli (-Klasor).'; exit 1 }
+  $r = Post-Json '/api/planla' @{ istek = $Planla; workdir = $Klasor }
+  if ($r.error) { Write-Output "HATA: $($r.error)"; exit 1 }
+  Write-Output "Planlama başladı. ID: $($r.id)"
+  $sure = if ($Bekle -gt 0) { $Bekle } else { 300 }
+  $deadline = (Get-Date).AddSeconds($sure)
+  do {
+    Start-Sleep -Seconds 5
+    $p = Invoke-RestMethod "$Base/api/plan?id=$($r.id)"
+  } while ($p.durum -eq 'calisiyor' -and (Get-Date) -lt $deadline)
+  Show-Plan $p
+  exit 0
+}
+
+if ($Onayla) {
+  $r = Post-Json '/api/plan-onayla' @{ id = $Onayla }
+  if ($r.error) { Write-Output "HATA: $($r.error)"; exit 1 }
+  Write-Output "Plan onaylandı, iş başladı. İş ID: $($r.id). Durum için panel: $Base/oda"
   exit 0
 }
 

@@ -26,7 +26,7 @@
   .is-baslik { font-weight: 600; font-size: 15px; color: var(--ink); text-align: right; max-width: 640px; }
   .is-baslik small { display: block; color: var(--muted); font-weight: 400; font-size: 13px; }
 
-  .akis { display: grid; grid-template-columns: 1fr 34px 1fr 34px 1fr; align-items: center; margin: 22px 0 18px; }
+  .akis { display: grid; grid-template-columns: 1fr 34px 1fr 34px 1fr 34px 1fr; align-items: center; margin: 22px 0 18px; }
   .asama { border: 1px solid var(--line); background: var(--card); border-radius: 14px; padding: 12px 16px; display: flex; align-items: center; gap: 12px; }
   .asama .no { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 14px; background: var(--card2); color: var(--muted); flex: 0 0 auto; }
   .asama b { display: block; font-size: 15px; }
@@ -66,6 +66,26 @@
   .oran { text-align: right; }
   .oran .kat { font-size: 40px; font-weight: 800; color: var(--lime); letter-spacing: -0.03em; line-height: 1; }
   .oran span { color: var(--muted); font-size: 13px; }
+
+  .yeni { margin-top: 20px; border: 1px solid var(--line); background: var(--card); border-radius: 14px; padding: 16px 20px; }
+  .yeni h2 { margin: 0 0 10px; font-size: 16px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
+  .yeni .satir { display: grid; grid-template-columns: 1fr 340px auto; gap: 10px; align-items: start; }
+  .yeni textarea, .yeni input { width: 100%; font: inherit; color: var(--ink); background: #0c0d0f; border: 1px solid #2b2c33; border-radius: 10px; padding: 9px 11px; }
+  .yeni textarea { min-height: 74px; resize: vertical; }
+  .btn { font: inherit; font-weight: 600; border-radius: 10px; padding: 9px 16px; border: 1px solid var(--line); background: var(--card2); color: var(--ink); cursor: pointer; white-space: nowrap; }
+  .btn.ana { background: var(--lime); color: #111; border-color: var(--lime); }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .plan-liste { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+  .plan-liste li { border: 1px solid #2b2c33; border-radius: 10px; padding: 10px 12px; background: #15161a; }
+  .plan-liste .ust b { font-size: 14px; }
+  .plan-liste .dosya { color: var(--muted); font: 12px/1.4 "Mono", monospace; margin-top: 4px; overflow-wrap: anywhere; }
+  .plan-liste details { margin-top: 6px; color: #c9cad0; font-size: 13px; }
+  .plan-liste summary { cursor: pointer; color: var(--muted); }
+  .plan-liste pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 0; font: 12px/1.45 "Mono", monospace; }
+  .uyari { color: var(--warn); font-size: 13px; margin: 8px 0 0; }
+  .hata-not { color: var(--bad); font-size: 13px; margin: 8px 0 0; }
+  .aksiyon { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
+  .aksiyon span { color: var(--muted); font-size: 13px; }
 </style>
 </head>
 <body>
@@ -73,11 +93,12 @@
   <header>
     <div>
       <h1>Ajan Odası</h1>
-      <p class="sub">İşi ücretsiz ajanlar yapar · Codex denetler · Claude son kontrolü yapar</p>
+      <p class="sub">Karar modeli işi böler · ücretsiz ajanlar yapar · Codex denetler · Claude son kontrolü yapar</p>
     </div>
     <div class="is-baslik" id="is"></div>
   </header>
 
+  <section class="yeni" id="yeni"></section>
   <section class="akis" id="akis"></section>
   <section class="grid" id="grid"></section>
   <section class="kiyas" id="kiyas"></section>
@@ -126,6 +147,80 @@ function ucretliKart(tur, veri, aktif) {
   </div>`;
 }
 
+// ---- Karar modeli paneli: istek -> plan -> onay ----
+let yeniAnahtar = null;
+const post = (u, b) => fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then((r) => r.json());
+
+function ajanAdi(agents, id) {
+  if (id === 'otomatik') return 'Otomatik seçim';
+  const a = agents.find((x) => x.id === id);
+  return a ? `${a.name} · ${a.model}` : id;
+}
+
+function yeniPanel(plan, agents) {
+  const durum = plan ? plan.durum : 'yok';
+  const anahtar = `${plan ? plan.id : ''}:${durum}`;
+  const kutu = $('yeni');
+  if (durum === 'calisiyor') {
+    // Yalnızca kayıt kısmı her saniye güncellenir.
+    if (yeniAnahtar !== anahtar) {
+      kutu.innerHTML = `<h2><span class="dot calisiyor"></span>Karar modeli planlıyor</h2>
+        <div class="gorev" id="plan-model"></div>
+        <div class="kayit" id="plan-kayit" style="height:120px"></div>
+        <div class="aksiyon"><button class="btn" id="plan-vazgec">Vazgeç</button><span id="plan-sure"></span></div>`;
+      $('plan-vazgec').onclick = async () => { await post('/api/plan-iptal', { id: plan.id }); yenile(); };
+    }
+    $('plan-model').textContent = plan.model || 'Başlıyor…';
+    $('plan-kayit').innerHTML = son(plan.log, 8) || '<span style="color:#55565d">—</span>';
+    $('plan-sure').textContent = sure(plan.createdAt);
+    yeniAnahtar = anahtar;
+    return;
+  }
+  if (yeniAnahtar === anahtar) return; // form ya da plan zaten ekranda; yazılanı silme
+  yeniAnahtar = anahtar;
+  if (durum === 'hazir') {
+    const gorevler = plan.gorevler || [];
+    kutu.innerHTML = `<h2>Plan hazır · ${esc(plan.baslik)} <span class="chip free">${esc(plan.model || '')}</span></h2>
+      <div class="gorev">${esc(plan.workdir)}</div>
+      <ol class="plan-liste">${gorevler.map((g, i) => `<li>
+        <div class="ust"><b>${i + 1}. ${esc(g.baslik)}</b><span class="chip ${g.pref === 'otomatik' ? '' : 'free'}" style="${g.pref === 'otomatik' ? 'background:#2b2c33;color:#c9cad0' : ''}">${esc(ajanAdi(agents, g.pref))}${g.metinIsi ? ' · metin' : ''}</span></div>
+        ${g.dosyalar && g.dosyalar.length ? `<div class="dosya">${g.dosyalar.map(esc).join(' · ')}</div>` : ''}
+        <details><summary>Talimat</summary><pre>${esc(g.text)}</pre></details>
+      </li>`).join('')}</ol>
+      ${(plan.uyarilar || []).map((u) => `<p class="uyari">⚠ ${esc(u)}</p>`).join('')}
+      <div class="aksiyon"><button class="btn ana" id="plan-onay">Onayla ve başlat</button><button class="btn" id="plan-iptal">Vazgeç</button>
+      <span>Onaylayınca ajanlar çalışır; sonra Codex (ChatGPT aboneliği) ve Claude (Claude kotası) devreye girer.</span></div>
+      <p class="hata-not" id="plan-hata"></p>`;
+    $('plan-onay').onclick = async (e) => {
+      e.target.disabled = true;
+      const r = await post('/api/plan-onayla', { id: plan.id });
+      if (r.error) { $('plan-hata').textContent = r.error; e.target.disabled = false; return; }
+      yenile();
+    };
+    $('plan-iptal').onclick = async () => { await post('/api/plan-iptal', { id: plan.id }); yenile(); };
+    return;
+  }
+  // Yeni istek formu (plan yok, onaylandı, iptal ya da hata)
+  const onceki = durum === 'hata' ? `<p class="hata-not">Son planlama başarısız: ${esc(plan.not || 'bilinmeyen hata')}</p>` : '';
+  const sonKlasor = (() => { try { return localStorage.getItem('oda-klasor') || ''; } catch { return ''; } })();
+  kutu.innerHTML = `<h2>Yeni iş · karar modeli</h2>
+    <div class="satir">
+      <textarea id="istek" placeholder="Ne yapılsın? Örnek: Listing Studio'da ücretsiz araçlar sayfasına bir 'KDV dahil fiyat' hesaplayıcısı ekle ve testlerini yaz."></textarea>
+      <input id="klasor" placeholder="Çalışma klasörü (örn. C:\\Users\\...\\listing-studio)" value="${esc(sonKlasor)}">
+      <button class="btn ana" id="planla">Planla</button>
+    </div>
+    <p class="hata-not" id="istek-hata"></p>${onceki}`;
+  $('planla').onclick = async (e) => {
+    const istek = $('istek').value.trim();
+    const workdir = $('klasor').value.trim();
+    try { localStorage.setItem('oda-klasor', workdir); } catch {}
+    e.target.disabled = true;
+    const r = await post('/api/planla', { istek, workdir });
+    if (r.error) { $('istek-hata').textContent = r.error; e.target.disabled = false; return; }
+    yenile();
+  };
+}
+
 const tik = '<svg width="16" height="16" viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 async function yenile() {
@@ -134,13 +229,16 @@ async function yenile() {
   const is = d.is;
   $('is').innerHTML = is ? `${esc(is.baslik)}<small>${esc(is.workdir)}</small>` : '<small>Henüz iş yok</small>';
   const asama = is ? is.asama : '';
-  const sira = ['ajanlar', 'codex', 'claude', 'bitti'];
-  const k = sira.indexOf(asama);
-  const ad = [['Ücretsiz ajanlar', 'İşin tamamını yapar'], ['Codex denetim', 'Kontrol eder, düzeltir'], ['Claude son kontrol', 'Biten işe bakar']];
+  const plan = d.plan;
+  const planBekliyor = plan && (plan.durum === 'calisiyor' || plan.durum === 'hazir');
+  const sira = ['plan', 'ajanlar', 'codex', 'claude', 'bitti'];
+  const k = planBekliyor ? 0 : (is ? sira.indexOf(asama) : -1);
+  const ad = [['Karar modeli', 'İşi böler, ajan seçer'], ['Ücretsiz ajanlar', 'İşin tamamını yapar'], ['Codex denetim', 'Kontrol eder, düzeltir'], ['Claude son kontrol', 'Biten işe bakar']];
   $('akis').innerHTML = ad.map(([b, s], i) => {
     const cls = k === i ? 'aktif' : k > i ? 'tamam' : '';
-    return `<div class="asama ${cls}"><div class="no">${k > i ? tik : i + 1}</div><div><b>${b}</b><span>${s}</span></div></div>` + (i < 2 ? '<div class="ok">→</div>' : '');
+    return `<div class="asama ${cls}"><div class="no">${k > i ? tik : i + 1}</div><div><b>${b}</b><span>${s}</span></div></div>` + (i < 3 ? '<div class="ok">→</div>' : '');
   }).join('');
+  yeniPanel(plan, d.agents);
 
   const gorevler = is ? is.gorevler : [];
   const kartlar = d.agents.map((a) => ajanKart(a, gorevler.filter((g) => g.agentId === a.id).pop()));
