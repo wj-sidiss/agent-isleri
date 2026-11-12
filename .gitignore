@@ -1,0 +1,10 @@
+# Calisma verisi ve ciktilar (kisisel is kayitlari, buyuk dosyalar)
+calisma/
+sonuclar/
+gorevler.json
+isler*.json
+kiyas*.json
+*.log
+sunucu.log
+node_modules/
+.env*

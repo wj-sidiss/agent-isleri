@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent İşleri</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --card: #ffffff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e4e2dc;
+    --accent: #2f6f4f; --accent-ink: #fff; --warn: #a35a00; --bad: #b3261e; --run: #1f5fa8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --card: #201f1e; --ink: #ecebe7; --muted: #9a9892; --line: #33322f;
+      --accent: #5fae86; --accent-ink: #0d1a13; --warn: #e0a050; --bad: #ef7a72; --run: #7fb2ec;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .agents { display: flex; gap: 10px; flex-wrap: wrap; }
+  .agent { flex: 1 1 180px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .agent b { display: block; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--accent); }
+  .dot.busy { background: var(--run); } .dot.off { background: var(--bad); } .dot.cool { background: var(--warn); }
+  textarea, input, select { width: 100%; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  textarea { min-height: 110px; resize: vertical; }
+  .row { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+  .row > * { flex: 1 1 200px; }
+  label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 4px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button:hover { filter: brightness(0.95); }
+  .task { border-top: 1px solid var(--line); padding: 12px 0; }
+  .task:first-child { border-top: 0; }
+  .task-head { display: flex; justify-content: space-between; gap: 10px; align-items: start; }
+  .task-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 99px; white-space: nowrap; border: 1px solid currentColor; }
+  .s-bekliyor { color: var(--muted); } .s-calisiyor { color: var(--run); } .s-bitti { color: var(--accent); } .s-hata, .s-iptal { color: var(--bad); }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .actions button { padding: 4px 10px; font-size: 13px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; margin: 8px 0 0; }
+  .empty { color: var(--muted); }
+  .err { color: var(--bad); margin-top: 8px; min-height: 1em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Agent İşleri</h1>
+  <p class="sub">Görevi yaz, arka planda ücretsiz agent'lar yapsın. Biri takılırsa diğeri devralır.</p>
+
+  <div class="card">
+    <div class="agents" id="agents"></div>
+    <div class="actions"><button id="reset" title="Kota bekleme sürelerini sıfırla">Kotaları sıfırla</button></div>
+  </div>
+
+  <div class="card">
+    <label for="text">Görev</label>
+    <textarea id="text" placeholder="Örn: Duvar saati için 10 farklı Etsy başlığı ve 13 etiket yaz, sonuc.txt dosyasına kaydet."></textarea>
+    <div class="row">
+      <div>
+        <label for="workdir">Çalışma klasörü (boş bırakırsan yeni klasör açılır)</label>
+        <input id="workdir" placeholder="C:\Users\Administrator\Desktop\...">
+      </div>
+      <div style="flex:0 1 180px">
+        <label for="pref">Agent</label>
+        <select id="pref"><option value="otomatik">Otomatik</option><option value="antigravity">Önce Antigravity</option><option value="opencode-glm">Önce OpenCode (GLM)</option><option value="opencode-deepseek">Önce OpenCode (DeepSeek)</option><option value="ollama">Önce Ollama (yerel)</option></select>
+      </div>
+    </div>
+    <div class="row" style="justify-content:flex-end"><button class="primary" id="send" style="flex:0 0 auto">Gönder</button></div>
+    <div class="err" id="err"></div>
+  </div>
+
+  <div class="card">
+    <div id="tasks"></div>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const open = new Set();
+const labels = { bekliyor: 'Bekliyor', calisiyor: 'Çalışıyor', bitti: 'Bitti', hata: 'Hata', iptal: 'İptal' };
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const post = (u, b) => fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then((r) => r.json());
+
+async function refresh() {
+  let d;
+  try { d = await (await fetch('/api/durum')).json(); } catch { $('err').textContent = 'Sunucuya ulaşılamıyor. baslat.bat açık mı?'; return; }
+  $('agents').innerHTML = d.agents.map((a) => {
+    let cls = '', st = 'Hazır';
+    if (!a.installed) { cls = 'off'; st = 'Kurulu değil'; }
+    else if (a.busy) { cls = 'busy'; st = 'Çalışıyor'; }
+    else if (a.cooldownMin > 0) { cls = 'cool'; st = `${a.note || 'Bekliyor'} (${a.cooldownMin} dk)`; }
+    return `<div class="agent"><b>${esc(a.name)}</b><span class="dot ${cls}"></span>${esc(st)}</div>`;
+  }).join('');
+
+  if (!d.tasks.length) { $('tasks').innerHTML = '<p class="empty">Henüz görev yok.</p>'; return; }
+  const scrolls = {};
+  document.querySelectorAll('pre[data-id]').forEach((p) => { scrolls[p.dataset.id] = p.scrollHeight - p.scrollTop - p.clientHeight < 30; });
+  $('tasks').innerHTML = d.tasks.map((t) => {
+    const time = new Date(t.createdAt).toLocaleString('tr-TR');
+    const btns = [];
+    btns.push(`<button data-act="log" data-id="${t.id}">${open.has(t.id) ? 'Kaydı gizle' : 'Kaydı göster'}</button>`);
+    btns.push(`<button data-act="klasor" data-id="${t.id}">Klasörü aç</button>`);
+    if (t.resultFile) btns.push(`<button data-act="sonuc" data-id="${t.id}">Sonucu aç</button>`);
+    if (t.status === 'bekliyor' || t.status === 'calisiyor') btns.push(`<button data-act="iptal" data-id="${t.id}">İptal</button>`);
+    else btns.push(`<button data-act="sil" data-id="${t.id}">Listeden kaldır</button>`);
+    return `<div class="task">
+      <div class="task-head"><div class="task-text">${esc(t.text)}</div><span class="badge s-${t.status}">${labels[t.status] || t.status}</span></div>
+      <div class="meta">${time}${t.agent ? ' · ' + esc(t.agent) : ''} · ${esc(t.workdir)}</div>
+      <div class="actions">${btns.join('')}</div>
+      ${open.has(t.id) ? `<pre data-id="${t.id}">${esc(t.log) || 'Henüz çıktı yok.'}</pre>` : ''}
+    </div>`;
+  }).join('');
+  document.querySelectorAll('pre[data-id]').forEach((p) => { if (scrolls[p.dataset.id] !== false) p.scrollTop = p.scrollHeight; });
+}
+
+$('tasks').addEventListener('click', async (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  const { act, id } = b.dataset;
+  if (act === 'log') { open.has(id) ? open.delete(id) : open.add(id); }
+  if (act === 'klasor') await post('/api/ac', { id, which: 'klasor' });
+  if (act === 'sonuc') await post('/api/ac', { id, which: 'sonuc' });
+  if (act === 'iptal') await post('/api/iptal', { id });
+  if (act === 'sil') await post('/api/sil', { id });
+  refresh();
+});
+
+$('send').onclick = async () => {
+  $('err').textContent = '';
+  const r = await post('/api/gorev', { text: $('text').value, workdir: $('workdir').value, pref: $('pref').value });
+  if (r.error) { $('err').textContent = r.error; return; }
+  $('text').value = '';
+  open.add(r.id);
+  refresh();
+};
+$('text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.ctrlKey) $('send').click(); });
+$('reset').onclick = async () => { await post('/api/kota-sifirla', {}); refresh(); };
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

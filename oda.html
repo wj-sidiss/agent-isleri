@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ajan Odası</title>
+<style>
+  @font-face { font-family: "Inter"; src: url(/fonts/inter-latin-400-normal.woff2) format("woff2"); font-weight: 400; unicode-range: U+0000-00FF, U+0131, U+2000-206F, U+20AC; }
+  @font-face { font-family: "Inter"; src: url(/fonts/inter-latin-ext-400-normal.woff2) format("woff2"); font-weight: 400; unicode-range: U+0100-0130, U+0132-024F; }
+  @font-face { font-family: "Inter"; src: url(/fonts/inter-latin-600-normal.woff2) format("woff2"); font-weight: 600; unicode-range: U+0000-00FF, U+0131, U+2000-206F, U+20AC; }
+  @font-face { font-family: "Inter"; src: url(/fonts/inter-latin-ext-600-normal.woff2) format("woff2"); font-weight: 600; unicode-range: U+0100-0130, U+0132-024F; }
+  @font-face { font-family: "Inter"; src: url(/fonts/inter-latin-800-normal.woff2) format("woff2"); font-weight: 800; unicode-range: U+0000-00FF, U+0131, U+2000-206F, U+20AC; }
+  @font-face { font-family: "Inter"; src: url(/fonts/inter-latin-ext-800-normal.woff2) format("woff2"); font-weight: 800; unicode-range: U+0100-0130, U+0132-024F; }
+  @font-face { font-family: "Mono"; src: url(/fonts/jetbrains-mono-latin-400-normal.woff2) format("woff2"); unicode-range: U+0000-00FF, U+0131, U+2000-206F; }
+  @font-face { font-family: "Mono"; src: url(/fonts/jetbrains-mono-latin-ext-400-normal.woff2) format("woff2"); unicode-range: U+0100-0130, U+0132-024F; }
+  :root {
+    --bg: #111214; --card: #1a1b1f; --card2: #202127; --line: #2b2c33; --ink: #f2f2f4; --muted: #9b9ca4;
+    --lime: #d4f75b; --run: #7cc4ff; --warn: #f0b356; --bad: #ff7b72; --codex: #5fd4b8; --claude: #e8916f;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 "Inter", sans-serif; }
+  main { padding: 26px 32px 28px; max-width: 1600px; margin: 0 auto; }
+  header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+  h1 { margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
+  .sub { margin: 4px 0 0; color: var(--muted); font-size: 15px; }
+  .is-baslik { font-weight: 600; font-size: 15px; color: var(--ink); text-align: right; max-width: 640px; }
+  .is-baslik small { display: block; color: var(--muted); font-weight: 400; font-size: 13px; }
+
+  .akis { display: grid; grid-template-columns: 1fr 34px 1fr 34px 1fr; align-items: center; margin: 22px 0 18px; }
+  .asama { border: 1px solid var(--line); background: var(--card); border-radius: 14px; padding: 12px 16px; display: flex; align-items: center; gap: 12px; }
+  .asama .no { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 14px; background: var(--card2); color: var(--muted); flex: 0 0 auto; }
+  .asama b { display: block; font-size: 15px; }
+  .asama span { color: var(--muted); font-size: 13px; }
+  .asama.aktif { border-color: var(--lime); box-shadow: 0 0 0 1px var(--lime) inset; }
+  .asama.aktif .no { background: var(--lime); color: #111; }
+  .asama.tamam .no { background: #2c3b16; color: var(--lime); }
+  .ok { color: var(--line); text-align: center; font-size: 20px; }
+
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .ajan { border: 1px solid var(--line); background: var(--card); border-radius: 14px; padding: 14px 16px; height: 256px; display: flex; flex-direction: column; overflow: hidden; }
+  .ajan.calisiyor { border-color: #35506a; }
+  .ajan.ucretli { background: var(--card2); }
+  .ust { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .ad { font-weight: 800; font-size: 16px; }
+  .model { color: var(--muted); font-size: 13px; }
+  .chip { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 99px; white-space: nowrap; }
+  .chip.free { background: var(--lime); color: #111; }
+  .chip.codex { background: #173a33; color: var(--codex); }
+  .chip.claude { background: #3d2419; color: var(--claude); }
+  .durum { margin-top: 8px; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #4a4b52; flex: 0 0 auto; }
+  .dot.calisiyor { background: var(--run); box-shadow: 0 0 0 3px rgba(124,196,255,0.25); }
+  .dot.bitti { background: var(--lime); }
+  .dot.hata, .dot.off { background: var(--bad); }
+  .dot.kota { background: var(--warn); }
+  @keyframes nefes { 50% { opacity: 0.35; } }
+  .gorev { color: var(--muted); font-size: 13px; margin-top: 4px; min-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kayit { margin-top: 10px; flex: 1 1 0; min-height: 0; background: #0c0d0f; border: 1px solid #23242a; border-radius: 10px; padding: 8px 10px; font: 12px/1.45 "Mono", monospace; color: #b9bac1; white-space: pre-wrap; overflow-wrap: anywhere; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+  .alt { display: flex; justify-content: space-between; margin-top: 8px; font-size: 13px; color: var(--muted); }
+  .alt b { color: var(--ink); font-weight: 600; }
+
+  .kiyas { margin-top: 14px; border: 1px solid var(--line); background: var(--card); border-radius: 14px; padding: 16px 20px; display: grid; grid-template-columns: 1fr 1fr auto; gap: 24px; align-items: center; }
+  .kiyas h3 { margin: 0 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+  .kiyas .sayi { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; }
+  .kiyas .detay { color: var(--muted); font-size: 13px; }
+  .oran { text-align: right; }
+  .oran .kat { font-size: 40px; font-weight: 800; color: var(--lime); letter-spacing: -0.03em; line-height: 1; }
+  .oran span { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Ajan Odası</h1>
+      <p class="sub">İşi ücretsiz ajanlar yapar · Codex denetler · Claude son kontrolü yapar</p>
+    </div>
+    <div class="is-baslik" id="is"></div>
+  </header>
+
+  <section class="akis" id="akis"></section>
+  <section class="grid" id="grid"></section>
+  <section class="kiyas" id="kiyas"></section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const sayi = (n) => (n == null ? '–' : Math.round(n).toLocaleString('tr-TR'));
+const dolar = (n) => (n == null ? '–' : '$' + n.toFixed(2).replace('.', ','));
+const sure = (bas, bit) => { if (!bas) return ''; const s = Math.round(((bit || Date.now()) - bas) / 1000); return s < 60 ? `${s} sn` : `${Math.floor(s / 60)} dk ${s % 60} sn`; };
+const son = (log, n = 6) => esc((log || '').split('\n').map((x) => x.trimEnd()).filter((x) => x.trim()).slice(-n).join('\n'));
+const DURUM = { bekliyor: 'Sırada', calisiyor: 'Çalışıyor', bitti: 'Bitti', hata: 'Hata', iptal: 'İptal' };
+
+function ajanKart(a, gorev) {
+  let cls = '', st = 'Hazır';
+  if (!a.installed) { cls = 'off'; st = 'Kurulu değil'; }
+  else if (a.busy) { cls = 'calisiyor'; st = 'Çalışıyor'; }
+  else if (a.cooldownMin > 0) { cls = 'kota'; st = `${a.note || 'Bekliyor'} · ${a.cooldownMin} dk`; }
+  else if (gorev && gorev.status === 'bitti') { cls = 'bitti'; st = 'Bitirdi'; }
+  const baslik = a.busy ? a.gorev : (gorev ? gorev.baslik : '');
+  const kayit = a.busy ? a.kayit : (gorev ? gorev.kayit : '');
+  return `<div class="ajan ${a.busy ? 'calisiyor' : ''}">
+    <div class="ust"><div><div class="ad">${esc(a.name)}</div><div class="model">${esc(a.model)}</div></div><span class="chip free">ücretsiz</span></div>
+    <div class="durum"><span class="dot ${cls}"></span>${esc(st)}</div>
+    <div class="gorev">${esc(baslik || '—')}</div>
+    <div class="kayit">${son(kayit) || '<span style="color:#55565d">—</span>'}</div>
+    <div class="alt"><span>${gorev && gorev.sure ? 'Süre <b>' + gorev.sure + ' sn</b>' : ''}</span><span>Token maliyeti <b>$0</b></span></div>
+  </div>`;
+}
+
+function ucretliKart(tur, veri, aktif) {
+  const ad = tur === 'codex' ? 'Codex' : 'Claude Code';
+  const rol = tur === 'codex' ? 'Denetçi · düzeltir' : 'Son kalite kontrolü';
+  const chip = tur === 'codex' ? '<span class="chip codex">ChatGPT aboneliği</span>' : '<span class="chip claude">Claude aboneliği</span>';
+  const d = veri ? veri.durum : (aktif ? 'calisiyor' : 'bekliyor');
+  const st = veri ? (DURUM[d] || d) : 'Sırasını bekliyor';
+  let tok = '–';
+  if (tur === 'codex' && veri && veri.usage) tok = sayi(veri.usage.input + veri.usage.output) + ' token';
+  if (tur === 'claude' && veri && veri.toplamToken) tok = sayi(veri.toplamToken) + ' token · ' + dolar(veri.maliyet);
+  return `<div class="ajan ucretli ${d === 'calisiyor' ? 'calisiyor' : ''}">
+    <div class="ust"><div><div class="ad">${ad}</div><div class="model">${rol}</div></div>${chip}</div>
+    <div class="durum"><span class="dot ${d}"></span>${esc(st)}</div>
+    <div class="gorev">${veri && veri.basla ? sure(veri.basla, veri.bitis) : '&nbsp;'}</div>
+    <div class="kayit">${son(veri && veri.log) || '<span style="color:#55565d">—</span>'}</div>
+    <div class="alt"><span></span><span>Harcanan <b>${tok}</b></span></div>
+  </div>`;
+}
+
+const tik = '<svg width="16" height="16" viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+async function yenile() {
+  let d;
+  try { d = await (await fetch('/api/oda')).json(); } catch { return; }
+  const is = d.is;
+  $('is').innerHTML = is ? `${esc(is.baslik)}<small>${esc(is.workdir)}</small>` : '<small>Henüz iş yok</small>';
+  const asama = is ? is.asama : '';
+  const sira = ['ajanlar', 'codex', 'claude', 'bitti'];
+  const k = sira.indexOf(asama);
+  const ad = [['Ücretsiz ajanlar', 'İşin tamamını yapar'], ['Codex denetim', 'Kontrol eder, düzeltir'], ['Claude son kontrol', 'Biten işe bakar']];
+  $('akis').innerHTML = ad.map(([b, s], i) => {
+    const cls = k === i ? 'aktif' : k > i ? 'tamam' : '';
+    return `<div class="asama ${cls}"><div class="no">${k > i ? tik : i + 1}</div><div><b>${b}</b><span>${s}</span></div></div>` + (i < 2 ? '<div class="ok">→</div>' : '');
+  }).join('');
+
+  const gorevler = is ? is.gorevler : [];
+  const kartlar = d.agents.map((a) => ajanKart(a, gorevler.filter((g) => g.agentId === a.id).pop()));
+  kartlar.push(ucretliKart('codex', is && is.codex, asama === 'codex'));
+  kartlar.push(ucretliKart('claude', is && is.claude && is.claude.durum ? is.claude : null, asama === 'claude'));
+  $('grid').innerHTML = kartlar.join('');
+
+  const kv = d.kiyas, cv = is && is.claude;
+  const tekToken = kv && kv.toplamToken, odaToken = cv && cv.toplamToken;
+  const codexToken = is && is.codex && is.codex.usage ? is.codex.usage.input + is.codex.usage.output : null;
+  const kat = tekToken && odaToken ? tekToken / odaToken : null;
+  $('kiyas').innerHTML = `
+    <div><h3>Aynı işi tek başına Claude yapsa</h3><div class="sayi">${sayi(tekToken)} token</div><div class="detay">${kv && kv.maliyet != null ? dolar(kv.maliyet) + ' · ' + sure(kv.basla, kv.bitis) : (kv && kv.durum === 'calisiyor' ? 'Ölçülüyor…' : '–')}</div></div>
+    <div><h3>Ajan Odası'nda Claude</h3><div class="sayi">${sayi(odaToken)} token</div><div class="detay">${cv && cv.maliyet != null ? dolar(cv.maliyet) : '–'}${codexToken ? ' · Codex ' + sayi(codexToken) + ' token' : ''}</div></div>
+    <div class="oran"><div class="kat">${kat ? '≈ ' + (kat >= 10 ? Math.round(kat) : kat.toFixed(1).replace('.', ',')) + '× az' : '–'}</div><span>Claude token'ı</span></div>`;
+}
+yenile();
+setInterval(yenile, 1000);
+</script>
+</body>
+</html>
